@@ -72,7 +72,6 @@ def load_model():
     try:
         model_path = "pancreas_model_105_best_20260314_190232.h5"
         if os.path.exists(model_path):
-            # Load normally without any v1 compatibility
             model = tf.keras.models.load_model(model_path, compile=False)
             return model
         else:
@@ -269,7 +268,7 @@ if predict_btn and file_path and model:
             ct_input = np.expand_dims(np.expand_dims(ct_norm, axis=0), axis=-1)
             actual_slice_count = ct_norm.shape[2]
 
-            # Clinical features (8 features)
+            # Clinical features (7 features - MATCHING MODEL EXPECTATION)
             sex_enc = 1 if sex == "Male" else 0
 
             if manufacturer == "GE":
@@ -281,17 +280,17 @@ if predict_btn and file_path and model:
             else:
                 man_enc = [0.0, 0.0, 0.0, 1.0]
 
+            # IMPORTANT: 7 features only (NOT 8)
             clinical_input = np.array([[
                 man_enc[0], man_enc[1], man_enc[2], man_enc[3],
                 float(sex_enc),
                 float(actual_slice_count) / 800.0,
-                float(age) / 100.0,
-                float(actual_slice_count) / 500.0
+                float(age) / 100.0
             ]], dtype=np.float32)
 
             progress_bar.progress(80)
 
-            # Simple prediction without any session magic
+            # Simple prediction
             prediction = model.predict([ct_input, clinical_input], verbose=0)
             pred = float(prediction[0][0]) * 100
 
