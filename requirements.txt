@@ -1,5 +1,5 @@
 streamlit==1.35.0
-tensorflow
+tensorflow==2.19.1
 numpy==1.26.3
 nibabel==5.2.0
 scikit-image==0.22.0
@@ -7,3 +7,6 @@ matplotlib==3.8.2
 Pillow==10.2.0
 protobuf==3.20.3
 scipy==1.11.4
+gdown==5.2.0
+requests==2.32.3
+pandas==2.1.4
