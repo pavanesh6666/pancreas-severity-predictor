@@ -1,6 +1,7 @@
-streamlit==1.35.0
-nibabel==5.2.0
-scikit-image==0.22.0
-matplotlib==3.8.2
-Pillow==10.2.0
-scipy==1.11.4
+streamlit
+nibabel
+scikit-image
+matplotlib
+pillow
+scipy
+numpy
