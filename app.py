@@ -1,8 +1,6 @@
 import streamlit as st
 import numpy as np
-# Instead of import tensorflow as tf
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
+import tensorflow as tf
 import matplotlib.pyplot as plt
 import nibabel as nib
 import tempfile
@@ -15,6 +13,9 @@ import datetime
 import gdown
 import io
 import requests
+
+# Disable eager execution for TensorFlow 1.x model compatibility
+tf.compat.v1.disable_eager_execution()
 
 st.set_page_config(
     page_title="Pancreas Severity Predictor",
@@ -88,28 +89,23 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-
 # Load model
 @st.cache_resource
 def load_model():
     try:
         model_path = "pancreas_model_105_best_20260314_190232.h5"
         if os.path.exists(model_path):
+            # Load with compile=False to avoid optimizer issues
             model = tf.keras.models.load_model(model_path, compile=False)
-
-            # IMPORTANT: Disable v2 behavior for compatibility with older model
-            tf.compat.v1.disable_eager_execution()
             return model
         else:
-            st.error(f"❌ Model file not found")
+            st.error(f"❌ Model file not found at {model_path}")
             return None
     except Exception as e:
-        st.error(f"❌ Error loading model")
+        st.error(f"❌ Error loading model: {str(e)}")
         return None
 
-
 model = load_model()
-
 
 def get_severity_level(score):
     """Get severity level and color based on score"""
@@ -123,7 +119,6 @@ def get_severity_level(score):
         return "Severe", "#fd7e14", "🔔"
     else:
         return "Very Severe", "#dc3545", "🏥"
-
 
 def get_recommendations(score):
     """Get recommendations based on severity score"""
@@ -193,7 +188,6 @@ def get_recommendations(score):
             "prognosis": "Under active management"
         }
 
-
 def resize_ct_volume(ct_data, target_size=(128, 128, 128)):
     """Resize CT volume to target dimensions"""
     try:
@@ -212,7 +206,6 @@ def resize_ct_volume(ct_data, target_size=(128, 128, 128)):
         st.error(f"Error resizing volume: {e}")
         return None
 
-
 def process_ct_file(file_path):
     """Process CT file and return normalized volume with original shape"""
     try:
@@ -221,12 +214,12 @@ def process_ct_file(file_path):
         ct_resized = resize_ct_volume(ct_data, (128, 128, 128))
         if ct_resized is None:
             return None, None
+        # Normalize to [0,1]
         ct_norm = (ct_resized - ct_resized.min()) / (ct_resized.max() - ct_resized.min() + 1e-8)
-        return ct_norm, original_shape
+        return ct_norm.astype(np.float32), original_shape
     except Exception as e:
         st.error(f"Error processing CT file: {e}")
         return None, None
-
 
 def download_from_drive(url):
     """Download file from Google Drive"""
@@ -248,7 +241,6 @@ def download_from_drive(url):
     except Exception as e:
         return None, str(e)
 
-
 def find_slices_for_display(volume, num_slices=4):
     """Find optimal slices for display"""
     depth = volume.shape[2]
@@ -260,7 +252,6 @@ def find_slices_for_display(volume, num_slices=4):
         idx = i * step
         indices.append(min(idx, depth - 1))
     return indices
-
 
 # Sidebar
 with st.sidebar:
@@ -282,7 +273,7 @@ with st.sidebar:
     has_pain = st.checkbox("Abdominal Pain")
     has_nausea = st.checkbox("Nausea/Vomiting")
 
-    # Scan Parameters (simplified - removed Number of Images)
+    # Scan Parameters
     st.markdown("### 📊 Scan Parameters")
     manufacturer = st.selectbox("Scanner Manufacturer", ["GE", "Siemens", "Philips", "Other"])
 
@@ -356,17 +347,17 @@ with st.sidebar:
 # Main content area - Simple status indicators
 col1, col2, col3 = st.columns(3)
 with col1:
-    if model:
+    if model is not None:
         st.metric("System Status", "✅ Online")
     else:
-        st.metric("System Status", "⚠️ Loading")
+        st.metric("System Status", "⚠️ Offline")
 with col2:
     st.metric("Model Accuracy", "89.4%")
 with col3:
     st.metric("Input Type", "3D CT + Clinical")
 
 # Prediction
-if predict_btn and file_path and model:
+if predict_btn and file_path and model is not None:
     with st.spinner("🔄 Processing and analyzing medical imaging data..."):
         try:
             progress_bar = st.progress(0)
@@ -384,36 +375,38 @@ if predict_btn and file_path and model:
             # Prepare for model
             ct_input = np.expand_dims(np.expand_dims(ct_norm, axis=0), axis=-1)
 
-            # Clinical features
+            # Clinical features (8 features as expected by model)
             sex_encoded = 1 if sex == "Male" else 0
 
-            # Manufacturer one-hot encoding
+            # Manufacturer one-hot encoding (4 features)
             if manufacturer == "GE":
-                man_enc = [1, 0, 0, 0]
+                man_enc = [1.0, 0.0, 0.0, 0.0]
             elif manufacturer == "Siemens":
-                man_enc = [0, 1, 0, 0]
+                man_enc = [0.0, 1.0, 0.0, 0.0]
             elif manufacturer == "Philips":
-                man_enc = [0, 0, 1, 0]
+                man_enc = [0.0, 0.0, 1.0, 0.0]
             else:
-                man_enc = [0, 0, 0, 1]
+                man_enc = [0.0, 0.0, 0.0, 1.0]
 
             # Auto-extract slice count from the CT volume
-            actual_slice_count = ct_norm.shape[2]  # The depth dimension
-            images_norm = min(actual_slice_count / 1000.0, 1.0)
+            actual_slice_count = ct_norm.shape[2]
+            images_norm = min(actual_slice_count / 800.0, 1.0)
 
-            # Default values for other parameters (not used in final model)
-            size_norm = 0.3
-            series_norm = 0.2
-
+            # Create clinical input (8 features total)
             clinical_input = np.array([[
                 man_enc[0], man_enc[1], man_enc[2], man_enc[3],
-                images_norm, size_norm, series_norm
+                float(sex_encoded),
+                float(images_norm),
+                float(age) / 100.0,
+                float(actual_slice_count) / 500.0
             ]], dtype=np.float32)
 
             progress_bar.progress(80)
 
-            # Predict
-            pred = model.predict([ct_input, clinical_input], verbose=0)[0][0] * 100
+            # Make prediction using tf.compat.v1 session
+            with tf.compat.v1.Session():
+                tf.compat.v1.keras.backend.set_session(tf.compat.v1.Session())
+                pred = model.predict([ct_input, clinical_input], verbose=0)[0][0] * 100
 
             progress_bar.progress(100)
             time.sleep(0.3)
@@ -470,7 +463,6 @@ if predict_btn and file_path and model:
                 axes[i].imshow(ct_norm[:, :, slice_idx], cmap='gray')
                 axes[i].set_title(f'Axial View - Slice {slice_idx}', fontsize=12, fontweight='bold')
                 axes[i].axis('off')
-                axes[i].add_patch(plt.Circle((64, 64), 20, color=color, fill=False, linewidth=2))
 
             plt.suptitle(f'CT Analysis - {level} Severity ({pred:.1f}%)', fontsize=14, fontweight='bold')
             plt.tight_layout()
@@ -528,19 +520,18 @@ Clinical correlation recommended.
             )
 
             # Cleanup
-            if file_path and os.path.exists(file_path):
+            if file_path and os.path.exists(file_path) and source_type != "local":
                 os.unlink(file_path)
 
         except Exception as e:
             st.error(f"❌ Analysis error: {str(e)}")
             import traceback
-
-            st.exception(traceback.format_exc())
+            st.text(traceback.format_exc())
 
 elif predict_btn and not file_path:
     st.warning("⚠️ Please upload a CT scan file first")
-elif predict_btn and not model:
-    st.error("❌ Model not loaded")
+elif predict_btn and model is None:
+    st.error("❌ Model not loaded. Please check the model file.")
 
 # Simple information section
 with st.expander("ℹ️ About This System", expanded=False):
@@ -559,13 +550,12 @@ with st.expander("ℹ️ About This System", expanded=False):
 # Footer
 st.markdown("---")
 st.markdown(
-    "<center style='color: #666;'>© 2026 Advanced Pancreatic Analysis System</center>",
+    "<center style='color: #666;'>© 2026 Advanced Pancreatic Analysis System | LBRCE CSE Department</center>",
     unsafe_allow_html=True
 )
 
 # Cleanup
 import atexit
-
 
 def cleanup():
     temp_files = ['temp_drive_file.nii.gz', 'temp_url_file.nii.gz']
@@ -575,7 +565,5 @@ def cleanup():
                 os.unlink(f)
             except:
                 pass
-
-
 
 atexit.register(cleanup)
