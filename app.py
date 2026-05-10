@@ -96,6 +96,9 @@ def load_model():
         model_path = "pancreas_model_105_best_20260314_190232.h5"
         if os.path.exists(model_path):
             model = tf.keras.models.load_model(model_path, compile=False)
+
+            # IMPORTANT: Disable v2 behavior for compatibility with older model
+            tf.compat.v1.disable_eager_execution()
             return model
         else:
             st.error(f"❌ Model file not found")
