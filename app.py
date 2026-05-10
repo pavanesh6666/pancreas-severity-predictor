@@ -14,7 +14,7 @@ import gdown
 import io
 import requests
 
-# Set TensorFlow to run eagerly (compatible with TF2 models)
+# Enable eager execution (TensorFlow 2 default)
 tf.config.run_functions_eagerly(True)
 
 st.set_page_config(
@@ -23,7 +23,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS (same as before)
+# Custom CSS
 st.markdown("""
     <style>
     .main-header {
@@ -72,7 +72,7 @@ def load_model():
     try:
         model_path = "pancreas_model_105_best_20260314_190232.h5"
         if os.path.exists(model_path):
-            # Load normally with TF2 (disabling custom objects if needed)
+            # Load normally without any v1 compatibility
             model = tf.keras.models.load_model(model_path, compile=False)
             return model
         else:
@@ -187,6 +187,7 @@ with st.sidebar:
     has_weight_loss = st.checkbox("Unexplained Weight Loss")
     has_jaundice = st.checkbox("Jaundice")
     has_pain = st.checkbox("Abdominal Pain")
+    has_nausea = st.checkbox("Nausea/Vomiting")
 
     st.markdown("### 📊 Scan Parameters")
     manufacturer = st.selectbox("Scanner Manufacturer", ["GE", "Siemens", "Philips", "Other"])
@@ -198,6 +199,7 @@ with st.sidebar:
 
     uploaded_file = None
     file_path = None
+    source_type = None
 
     if upload_source == "💻 My Computer":
         uploaded_file = st.file_uploader("Select NIfTI file", type=['nii', 'nii.gz'])
@@ -205,14 +207,16 @@ with st.sidebar:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.nii.gz') as tmp:
                 tmp.write(uploaded_file.getvalue())
                 file_path = tmp.name
+            source_type = "local"
             st.success(f"✅ Loaded: {uploaded_file.name}")
 
     elif upload_source == "☁️ Google Drive":
         drive_url = st.text_input("Google Drive link:")
-        if drive_url and st.button("📥 Download"):
+        if drive_url and st.button("📥 Download from Drive"):
             with st.spinner("Downloading..."):
                 file_path, status = download_from_drive(drive_url)
                 if file_path:
+                    source_type = "drive"
                     st.success("✅ Downloaded!")
                 else:
                     st.error(f"❌ {status}")
@@ -228,6 +232,7 @@ with st.sidebar:
                         with open(file_path, 'wb') as f:
                             for chunk in r.iter_content(chunk_size=8192):
                                 f.write(chunk)
+                        source_type = "url"
                         st.success("✅ Downloaded!")
                     else:
                         st.error("Download failed")
@@ -255,12 +260,12 @@ if predict_btn and file_path and model:
             progress_bar.progress(30)
             ct_norm, original_shape = process_ct_file(file_path)
             if ct_norm is None:
-                st.error("Failed to process CT")
+                st.error("Failed to process CT file")
                 st.stop()
 
             progress_bar.progress(60)
 
-            # Prepare input
+            # Prepare input for model
             ct_input = np.expand_dims(np.expand_dims(ct_norm, axis=0), axis=-1)
             actual_slice_count = ct_norm.shape[2]
 
@@ -281,20 +286,20 @@ if predict_btn and file_path and model:
                 float(sex_enc),
                 float(actual_slice_count) / 800.0,
                 float(age) / 100.0,
-                float(age) / 100.0  # Duplicate age as placeholder
+                float(actual_slice_count) / 500.0
             ]], dtype=np.float32)
 
             progress_bar.progress(80)
 
-            # Prediction using TF2
-            with tf.device('/CPU:0'):  # Force CPU to avoid GPU issues
-                pred = model.predict([ct_input, clinical_input], verbose=0)[0][0] * 100
+            # Simple prediction without any session magic
+            prediction = model.predict([ct_input, clinical_input], verbose=0)
+            pred = float(prediction[0][0]) * 100
 
             progress_bar.progress(100)
             time.sleep(0.3)
             progress_bar.empty()
 
-            # Display results
+            # Results
             level, color, icon = get_severity_level(pred)
             recommendations = get_recommendations(pred)
 
@@ -346,18 +351,18 @@ if predict_btn and file_path and model:
             plt.tight_layout()
             st.pyplot(fig)
 
-            # Download report
+            # Report download
             report = f"""PANCREATIC SEVERITY REPORT
 Generated: {datetime.datetime.now()}
 
 Patient: Age {age}, {sex}
 Severity: {pred:.1f}% ({level})
-Recommendations: {recommendations['actions'][0]}
-
---- Full Report ---
-Original CT: {original_shape}
 Scanner: {manufacturer}
+Slices: {actual_slice_count}
 Prognosis: {recommendations['prognosis']}
+
+Recommendations:
+{chr(10).join(['- ' + a for a in recommendations['actions']])}
 """
 
             st.download_button(
@@ -368,7 +373,7 @@ Prognosis: {recommendations['prognosis']}
             )
 
             # Cleanup
-            if file_path and os.path.exists(file_path) and upload_source != "💻 My Computer":
+            if file_path and source_type != "local" and os.path.exists(file_path):
                 os.unlink(file_path)
 
         except Exception as e:
@@ -377,7 +382,7 @@ Prognosis: {recommendations['prognosis']}
             st.code(traceback.format_exc())
 
 elif predict_btn and not file_path:
-    st.warning("⚠️ Please upload a CT scan file")
+    st.warning("⚠️ Please upload a CT scan file first")
 elif predict_btn and not model:
     st.error("❌ Model not loaded")
 
